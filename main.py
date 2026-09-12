@@ -1,15 +1,10 @@
+import gymnasium as gym
+import ale_py
+import numpy as np
 from typing import NamedTuple
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import seaborn as sns
-from tqdm import tqdm
-
-import gymnasium as gym
-from gymnasium.envs.toy_text.frozen_lake import generate_random_map
-
-sns.set_theme()
+gym.register_envs(ale_py)
+seed = np.random.default_rng(123)
 
 # used to set up the parametes of the envi and model
 class Params(NamedTuple):
@@ -17,71 +12,24 @@ class Params(NamedTuple):
     learning_rate: float
     gamma: float  # discount rate
     epsilon: float  # for exploration/exploitation
-    map_size: int  # no of tiles in the environment
     seed: int  # for a defined randomness
     is_slippery: bool  #
     n_runs: int
     action_size: int  # number of possible actions
     state_size: int  # no of possible states
-    proba_frozen: float  # prob that a tile is frozen
 
 params = Params(
     total_episodes=2000,
     learning_rate=0.8,
     gamma=0.95,
     epsilon=0.1,
-    map_size=5,
     seed=123,
     is_slippery=False,
     n_runs=20,
     action_size=None,
     state_size=None,
-    proba_frozen=0.9
 )
 
-# random generator
-seed = np.random.default_rng(params.seed)
-
-# Frozen Lake env
-env = gym.make(
-    "FrozenLake-v1",
-    is_slippery=params.is_slippery,
-    render_mode="rgb_array",
-    desc=generate_random_map(
-        size=params.map_size, p=params.proba_frozen, seed=params.seed
-    )
-)
-
-# Setting the action and state space based on the env (frozen lake)
-params = params._replace(action_size=env.action_space.n)
-params = params._replace(state_size=env.observation_space.n)
-
-# Q learning and impl
-class Qlearning:
-    def __init__(self, learning_rate, gamma, state_size, action_size):
-        self.state_size = state_size
-        self.action_size = action_size
-        self.learning_rate = learning_rate
-        self.gamma = gamma
-        # resets the q-table
-        self.reset_qtable()
-
-    def reset_qtable(self):
-        self.qtable = np.zeros((self.state_size, self.action_size))
-
-    # method to update the newer q-value in the q-table
-    def update(self, state, action, reward, new_state):
-        # update logic = Q(s,a) = Q(s,a) + lr * [R(s,a) + gamma * max( Q(s`, a`) ) - Q(s, a)]
-        delta = (
-            reward
-            + self.gamma * np.max(self.qtable[new_state, :])
-            - self.qtable[state, action]
-        )
-
-        q_update = self.qtable[state, action] + self.learning_rate * delta
-        return q_update
-
-# epsilon-greedy
 class EpsilonGreedy:
     def __init__(self, epsilon):
         self.epsilon = epsilon
@@ -102,169 +50,13 @@ class EpsilonGreedy:
             action =  seed.choice(max_ids)
         return action
 
-# method to run/train the agent
-def run_env():
-    rewards = np.zeros((params.total_episodes, params.n_runs))
-    steps = np.zeros((params.total_episodes, params.n_runs))
-    episodes = np.arange(params.total_episodes)
-    qtables = np.zeros((params.n_runs, params.state_size, params.action_size))
-    all_states, all_actions = [], []
+env = gym.make(
+    "ALE/DonkeyKong-v5",
+    render_mode="rgb_array"
+)
 
-    for run in range(params.n_runs):
-        learner.reset_qtable()  # resets the qtable after every run
+# Setting the action and state space of donkeykong
+params = params._replace(action_size=env.action_space.shape)
+params = params._replace(state_size=env.observation_space.shape)
 
-        for episode in tqdm(
-            episodes, desc=f"Run {run}/{params.n_runs} - Episodes", leave=False
-        ):
-            state, info = env.reset(seed=params.seed)
-            step = 0
-            done = False
-            total_reward = 0
-
-            while not done:
-                action = explorer.choose_action(
-                    action_space=env.action_space, state=state, q_table=learner.qtable,
-                )
-
-                all_states.append(state)
-                all_actions.append(action)
-
-                # Apply the action
-                new_state, reward, terminated, truncated, info = env.step(action)
-
-                done = terminated or truncated
-
-                learner.qtable[state, action] = learner.update(
-                    state, action, reward, new_state
-                )
-
-                total_reward += reward
-                step += 1
-
-                state = new_state
-
-            rewards[episode, run] = total_reward
-            steps[episode, run] = step
-
-        qtables[run, :, :] = learner.qtable
-
-    return rewards, steps, episodes, qtables, all_states, all_actions
-
-def postprocess(episodes, params, rewards, steps, map_size):
-    """Converting and plotting the results into dataframes"""
-
-    res = pd.DataFrame(
-        data={
-            "Episodes": np.tile(episodes, reps=params.n_runs),
-            "Rewards": rewards.flatten(order="F"),
-            "Steps": steps.flatten(order="F")
-        }
-    )
-    res["cum_rewards"] = rewards.cumsum(axis=0).flatten(order="F")
-    res["map_size"] = np.repeat(f"{map_size}X{map_size}", res.shape[0])
-
-    st = pd.DataFrame(data={"Episodes": episodes, "Steps": steps.mean(axis=1)})
-    st["map_size"] = np.repeat(f"{map_size}X{map_size}", st.shape[0])
-
-    return res, st
-
-def qtable_direction_map(qtable, map_size):
-    """Get the best action from qtable and map it with an arrow"""
-    qtable_val_max = qtable.max(axis=1).reshape(map_size, map_size)
-    qtable_best_action = np.argmax(qtable, axis=1).reshape(map_size, map_size)
-    directions = {0: "←", 1: "↓", 2: "→", 3: "↑"}
-    qtable_directions = np.empty(qtable_best_action.flatten().shape, dtype=str)
-    eps = np.finfo(float).eps
-    for idx, val in enumerate(qtable_best_action.flatten()):
-        if qtable_val_max.flatten()[idx] > eps:
-            qtable_directions[idx] = directions[val]
-
-    qtable_directions = qtable_directions.reshape(map_size, map_size)
-    return qtable_val_max, qtable_directions
-
-def plot_q_values_map(qtable, env, map_size):
-    """Plot the last frame of the simulation and the policy learned."""
-    qtable_val_max, qtable_directions = qtable_direction_map(qtable, map_size)
-
-    # Plot the last frame
-    fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(15, 5))
-    ax[0].imshow(env.render())
-    ax[0].axis("off")
-    ax[0].set_title("Last frame")
-
-    # Plot the policy
-    sns.heatmap(
-        qtable_val_max,
-        annot=qtable_directions,
-        fmt="",
-        ax=ax[1],
-        cmap=sns.color_palette("Blues", as_cmap=True),
-        linewidths=0.7,
-        linecolor="black",
-        xticklabels=[],
-        yticklabels=[],
-        annot_kws={"fontsize": "xx-large"},
-    ).set(title="Learned Q-values\nArrows represent best action")
-    for _, spine in ax[1].spines.items():
-        spine.set_visible(True)
-        spine.set_linewidth(0.7)
-        spine.set_color("black")
-    plt.show()
-
-def plot_states_actions_distribution(states, actions, map_size):
-    """Plot the distributions of states and actions."""
-    labels = {"LEFT": 0, "DOWN": 1, "RIGHT": 2, "UP": 3}
-
-    fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(15, 5))
-    sns.histplot(data=states, ax=ax[0], kde=True)
-    ax[0].set_title("States")
-    sns.histplot(data=actions, ax=ax[1])
-    ax[1].set_xticks(list(labels.values()), labels=labels.keys())
-    ax[1].set_title("Actions")
-    fig.tight_layout()
-    plt.show()
-
-map_sizes = [4]
-res_all = pd.DataFrame()
-st_all = pd.DataFrame()
-
-for map_size in map_sizes:
-    env = gym.make(
-        "FrozenLake-v1",
-        is_slippery=params.is_slippery,
-        render_mode="rgb_array",
-        desc=generate_random_map(
-            size=map_size, p=params.proba_frozen, seed=params.seed
-        ),
-    )
-
-    params = params._replace(action_size=env.action_space.n)
-    params = params._replace(state_size=env.observation_space.n)
-    env.action_space.seed(
-        params.seed
-    )  # Set the seed to get reproducible results when sampling the action space
-    learner = Qlearning(
-        learning_rate=params.learning_rate,
-        gamma=params.gamma,
-        state_size=params.state_size,
-        action_size=params.action_size,
-    )
-    explorer = EpsilonGreedy(
-        epsilon=params.epsilon,
-    )
-
-    print(f"Map size: {map_size}x{map_size}")
-    rewards, steps, episodes, qtables, all_states, all_actions = run_env()
-
-    # Save the results in dataframes
-    res, st = postprocess(episodes, params, rewards, steps, map_size)
-    res_all = pd.concat([res_all, res])
-    st_all = pd.concat([st_all, st])
-    qtable = qtables.mean(axis=0)  # Average the Q-table between runs
-
-    plot_states_actions_distribution(
-        states=all_states, actions=all_actions, map_size=map_size
-    )
-    plot_q_values_map(qtable, env, map_size)
-
-    env.close()
+print(f"action size: {params.action_size}, state size: {params.state_size}")
