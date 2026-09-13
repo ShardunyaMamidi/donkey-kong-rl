@@ -3,7 +3,7 @@ import numpy as np
 from collections import deque
 import cv2
 
-# used for frameskipping, considering 4 frames at once
+# used for frameskipping, we are considering every 4th frames and only considering last two which are then max pooled and returned
 class FrameSkip(gym.Wrapper):
     def __init__(self, env, skip=4):
         super().__init__(env)
@@ -58,7 +58,7 @@ class FrameStack(gym.ObservationWrapper):
             self.frames.append(obs)
         return np.stack(self.frames, axis=0), info
 
-    # called automatically on the observation returned by env.step()
+    # called automatically and the frames are appended during each step()
     def observation(self, observation):
         self.frames.append(observation)
         return np.stack(self.frames, axis=0)
@@ -67,4 +67,5 @@ class FrameStack(gym.ObservationWrapper):
 class ClipReward(gym.RewardWrapper):
     # called automatically on the reward returned by env.step()
     def reward(self, reward):
+        # either -1, 0, 1
         return np.sign(reward)

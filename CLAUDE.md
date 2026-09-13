@@ -14,6 +14,7 @@ it for what's done and what's next before assuming project state from memory.
   wrapper chain and prints observation shapes/dtypes after `reset()`/`step()`.
   Not a real test suite — just a manual smoke test.
 - `wrappers.py` — all `gym.Wrapper` subclasses (preprocessing pipeline).
+- `model.py` — the CNN (`DQN` class) that replaces the Q-table.
 - `frozen_lake_practice.py` — old tabular Q-learning reference implementation.
   Not part of the DonkeyKong pipeline; kept for comparison only.
 - `todo.md` — roadmap tracking DQN porting steps.
@@ -57,4 +58,23 @@ Other decisions:
   pass, not in `wrappers.py`.
 - **Episodic-life handling is intentionally not implemented yet** — deferred
   until/unless training stability needs it (see `todo.md` step 2).
+
+## Network (`model.py`) — decisions made so far
+
+- **Framework: PyTorch.** Chosen over TensorFlow for more idiomatic/eager
+  debugging and closer alignment with common DQN reference implementations.
+- **`DQN` class** — the classic "Nature DQN" architecture, sized for the
+  `(4, 84, 84)` uint8 input `FrameStack` produces:
+  - Conv1: 32 filters, 8x8, stride 4 -> Conv2: 64 filters, 4x4, stride 2 ->
+    Conv3: 64 filters, 3x3, stride 1 (ReLU after each)
+  - Flatten (`64 * 7 * 7 = 3136`, hardcoded — verified via a dummy forward
+    pass rather than computed dynamically) -> FC 512 -> FC `num_actions` (18
+    for Donkey Kong), no output activation (raw Q-values).
+- **Normalization lives inside `forward()`** (`x.float() / 255.0` as the
+  first op), not in `wrappers.py` or the future replay buffer. Rationale:
+  keeps the model self-contained so every caller (training, and later
+  inference/`choose_action`) automatically gets correctly-scaled input
+  without having to remember a separate normalization step.
+- No target network yet — that's a distinct later step (`todo.md` step 6);
+  `model.py` currently defines only the one network architecture.
 
