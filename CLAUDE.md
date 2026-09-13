@@ -18,6 +18,10 @@ it for what's done and what's next before assuming project state from memory.
 - `agent.py` — `EpsilonGreedy`, action-selection logic (exploration vs. a
   forward pass through the `DQN` network).
 - `replay_buffer.py` — `ReplayBuffer`, experience replay storage/sampling.
+- `train.py` — the actual training loop: env/network/target-network/optimizer
+  setup, epsilon decay, gradient steps, target-network sync. `main.py` is
+  still just wrapper-pipeline smoke tests; `train.py` is where real training
+  happens.
 - `frozen_lake_practice.py` — old tabular Q-learning reference implementation.
   Not part of the DonkeyKong pipeline; kept for comparison only.
 - `todo.md` — roadmap tracking DQN porting steps.
@@ -78,8 +82,8 @@ Other decisions:
   keeps the model self-contained so every caller (training, and later
   inference/`choose_action`) automatically gets correctly-scaled input
   without having to remember a separate normalization step.
-- No target network yet — that's a distinct later step (`todo.md` step 6);
-  `model.py` currently defines only the one network architecture.
+- The target network itself (a second `DQN` instance) is built and managed in
+  `train.py` (`make_target_network`), not `model.py` — see below.
 
 ## Agent (`agent.py`) — decisions made so far
 
@@ -96,6 +100,8 @@ Other decisions:
   - Normalization is *not* done here — that lives inside `model.py`'s
     `forward()`, so `choose_action` just hands the raw uint8 observation to
     the network.
+  - Takes a required `device` argument (no default) and moves the observation
+    tensor there before the forward pass, since `net` may live on GPU.
 
 ## Replay buffer (`replay_buffer.py`) — decisions made so far
 
@@ -111,7 +117,44 @@ Other decisions:
   returns plain **numpy arrays** (not torch tensors) — keeps this module
   framework-agnostic, same way `wrappers.py` has no torch dependency. The
   training loop (a later step) converts to tensors when needed.
-- `done` matters for the future loss computation: when `done` is true there's
+- `done` matters for the loss computation: when `done` is true there's
   no valid `next_state` to bootstrap value from, so the target should not
   include the discounted next-state term for that sample.
+
+## Training loop (`train.py`) — decisions made so far
+
+- **`make_env()`** builds the full wrapper chain (same order as documented
+  above) — the one place env construction happens for real training.
+- **Device: CUDA if available, else CPU** (`torch.device(...)`); `net` and
+  `target_net` are both moved to it, and `EpsilonGreedy` is given the same
+  device so its action-selection tensor lands in the right place.
+- **Target network (`make_target_network`)** — builds a second `DQN`,
+  copies weights via `load_state_dict`, sets `.eval()`, and disables grad on
+  all its params (`requires_grad_(False)`) since it's never trained directly,
+  only synced.
+- **Target sync is a hard periodic copy** (`todo.md`'s "periodically sync
+  target network"), gated on `train_step` — a counter that only increments
+  once a real gradient step has happened (i.e. only after buffer warm-up),
+  not on raw environment steps. Verified correct via a one-off diagnostic
+  script (mutate `net`'s weights, confirm divergence, sync, confirm they
+  match again) — script was deleted after confirming, not kept in the repo.
+- **Loss: Huber (`nn.SmoothL1Loss`)**, not MSE — more robust to outlier
+  TD-errors than MSE, matches the original DQN paper. **Optimizer: Adam**,
+  `learning_rate=1e-4`.
+- **`gamma=0.99`** — deliberately not reusing the old FrozenLake value
+  (`0.95`); Atari's longer reward horizons call for a higher discount factor.
+- **Gradient step**: `predicted_q` via `net(states).gather(1, actions...)`
+  (Q-value of the action actually taken); `target_q` via
+  `rewards + gamma * target_net(next_states).max(...) * (1 - dones)` inside
+  `torch.no_grad()`. Only `net`'s parameters are registered with the
+  optimizer — `target_net` only ever changes via the periodic sync.
+- **Epsilon decay (todo step 9): linear, per-step (not per-episode)** — from
+  `epsilon_start` to `epsilon_end` over `epsilon_decay_steps` global steps,
+  then held constant. Per-step chosen over per-episode since episode lengths
+  vary, making step-based decay more predictable/reproducible.
+- **Hyperparameters are currently untuned placeholders** (function defaults
+  in `train()`) — `num_episodes`, `batch_size`, `buffer_capacity`,
+  `warmup_steps`, `epsilon_*`, `target_sync_steps`, `gamma`,
+  `learning_rate`. The `__main__` block runs with deliberately small values
+  as a fast smoke test, not real training.
 
