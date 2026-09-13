@@ -10,18 +10,27 @@ it for what's done and what's next before assuming project state from memory.
 
 ## File layout
 
-- `main.py` — env setup + a `__main__` sanity-check block that builds the
-  wrapper chain and prints observation shapes/dtypes after `reset()`/`step()`.
-  Not a real test suite — just a manual smoke test.
+- `main.py` — defines `Params` (a `NamedTuple` consolidating every
+  hyperparameter) and one `params` instance with modest real-training values.
+  Its `__main__` block calls `train(params)` — **running `main.py` starts a
+  real, possibly long-running training job**, not a smoke test.
 - `wrappers.py` — all `gym.Wrapper` subclasses (preprocessing pipeline).
 - `model.py` — the CNN (`DQN` class) that replaces the Q-table.
 - `agent.py` — `EpsilonGreedy`, action-selection logic (exploration vs. a
   forward pass through the `DQN` network).
 - `replay_buffer.py` — `ReplayBuffer`, experience replay storage/sampling.
-- `train.py` — the actual training loop: env/network/target-network/optimizer
-  setup, epsilon decay, gradient steps, target-network sync. `main.py` is
-  still just wrapper-pipeline smoke tests; `train.py` is where real training
-  happens.
+- `train.py` — the training loop itself (`train(params)`): env/network/
+  target-network/optimizer setup, epsilon decay, gradient steps,
+  target-network sync, periodic + final checkpoint saving. Its own
+  `__main__` block runs a tiny hardcoded `Params` instance as a fast smoke
+  test (distinct from `main.py`'s real `params`).
+- `play.py` — loads a saved checkpoint into a fresh `DQN` and runs it greedily
+  (`epsilon=0.0`) against the env with `render_mode="human"` so you can watch
+  the trained agent play. CLI args: `--checkpoint` (default
+  `checkpoints/dqn_final.pt`), `--episodes` (default 5).
+- `checkpoints/` — saved model weights (`torch.save(net.state_dict(), ...)`)
+  from `train()`, one every `checkpoint_every` episodes (default 50) plus a
+  final save. Gitignored — these are large binary artifacts, not source.
 - `frozen_lake_practice.py` — old tabular Q-learning reference implementation.
   Not part of the DonkeyKong pipeline; kept for comparison only.
 - `todo.md` — roadmap tracking DQN porting steps.
@@ -152,9 +161,43 @@ Other decisions:
   `epsilon_start` to `epsilon_end` over `epsilon_decay_steps` global steps,
   then held constant. Per-step chosen over per-episode since episode lengths
   vary, making step-based decay more predictable/reproducible.
-- **Hyperparameters are currently untuned placeholders** (function defaults
-  in `train()`) — `num_episodes`, `batch_size`, `buffer_capacity`,
-  `warmup_steps`, `epsilon_*`, `target_sync_steps`, `gamma`,
-  `learning_rate`. The `__main__` block runs with deliberately small values
-  as a fast smoke test, not real training.
+- **All hyperparameters now come from a single `params: Params` argument**
+  (`total_episodes`, `learning_rate`, `gamma`, `epsilon_*`, `batch_size`,
+  `buffer_capacity`, `warmup_steps`, `target_sync_steps`, `num_frames`,
+  `frame_skip`) instead of ~10 separate keyword args — `Params` is defined in
+  `main.py` (see below) and imported here; `train.py`'s own `__main__`
+  constructs a separate tiny `Params` instance for a fast smoke test.
+- **Checkpointing (`checkpoint_dir`, `checkpoint_every` args on `train()`)** —
+  saves `net.state_dict()` every `checkpoint_every` episodes (default 50) and
+  once more at the end (`dqn_final.pt`), so an interrupted/crashed run doesn't
+  lose all progress. Only `net`'s weights are saved, not optimizer state or
+  buffer contents — enough to *play back* a trained agent (see `play.py`),
+  not to seamlessly resume training from the exact same point.
+
+## Hyperparameters (`main.py`'s `Params`) — decisions made so far
+
+- **Why `Params` lives in `main.py`, not `train.py`**: mirrors the old
+  `frozen_lake_practice.py` structure (`Params(NamedTuple)` defined near the
+  entry point). `train.py` imports `Params` from `main.py`; `main.py`'s
+  module-level code was deliberately kept side-effect-free (env
+  creation/`gym.register_envs` moved inside its `if __name__ == "__main__":`
+  guard) specifically so this cross-import doesn't trigger creating a raw
+  emulator instance just to get the `Params` class.
+- **`main.py`'s `train()` call uses a deferred (in-`__main__`) import of
+  `train`** — `from train import train` at the top of `main.py` would create
+  a circular import, since `train.py` imports `Params` from `main.py`.
+- **Values are deliberately modest**, not the original DQN paper's scale
+  (which used millions of frames and a 1M-transition replay buffer) —
+  chosen to keep a single-GPU hobby run's memory/compute reasonable:
+  `total_episodes=500`, `buffer_capacity=20_000`, `epsilon_decay_steps=50_000`,
+  `warmup_steps=1_000`, `target_sync_steps=1_000`, `batch_size=32`,
+  `learning_rate=1e-4`, `gamma=0.99`. These are a starting point, not tuned
+  final values — expect to revisit them based on how training actually goes.
+- **Known limitation (discussed, not yet acted on):** Donkey Kong is a
+  historically hard game for vanilla DQN (sparse/delayed rewards, precise
+  timing-dependent actions) — plain epsilon-greedy exploration at this scale
+  is unlikely to reach "finishing" a level even with more training time.
+  Algorithmic improvements discussed as possible next steps if this matters:
+  Double DQN, Dueling DQN, prioritized experience replay — none implemented
+  yet, not tracked in `todo.md` as of now.
 
