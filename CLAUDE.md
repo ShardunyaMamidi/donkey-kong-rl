@@ -15,6 +15,9 @@ it for what's done and what's next before assuming project state from memory.
   Not a real test suite — just a manual smoke test.
 - `wrappers.py` — all `gym.Wrapper` subclasses (preprocessing pipeline).
 - `model.py` — the CNN (`DQN` class) that replaces the Q-table.
+- `agent.py` — `EpsilonGreedy`, action-selection logic (exploration vs. a
+  forward pass through the `DQN` network).
+- `replay_buffer.py` — `ReplayBuffer`, experience replay storage/sampling.
 - `frozen_lake_practice.py` — old tabular Q-learning reference implementation.
   Not part of the DonkeyKong pipeline; kept for comparison only.
 - `todo.md` — roadmap tracking DQN porting steps.
@@ -77,4 +80,38 @@ Other decisions:
   without having to remember a separate normalization step.
 - No target network yet — that's a distinct later step (`todo.md` step 6);
   `model.py` currently defines only the one network architecture.
+
+## Agent (`agent.py`) — decisions made so far
+
+- **`EpsilonGreedy`** — same exploration-vs-exploitation shape as the old
+  tabular version (`frozen_lake_practice.py`), reworked for DQN:
+  - Takes `rng` in the constructor (an `np.random.default_rng(...)` instance)
+    instead of relying on a module-level global, so the class is
+    self-contained/testable on its own.
+  - Exploitation: adds a batch dim (`unsqueeze(0)`) to the single stacked
+    observation, runs it through the network inside `torch.no_grad()` (no
+    grad tracking needed for action selection), and takes a plain
+    `argmax` — no tie-breaking logic like the old Q-table version had, since
+    exact ties are effectively impossible with continuous network outputs.
+  - Normalization is *not* done here — that lives inside `model.py`'s
+    `forward()`, so `choose_action` just hands the raw uint8 observation to
+    the network.
+
+## Replay buffer (`replay_buffer.py`) — decisions made so far
+
+- **`ReplayBuffer`** stores `(state, action, reward, next_state, done)`
+  transitions in a `deque(maxlen=capacity)` (same eviction pattern as
+  `FrameSkip`/`FrameStack`).
+- **Naive storage** — each transition stores its *full* `(4, 84, 84)` stacked
+  state/next_state, not individual frames. This duplicates frame data across
+  transitions (~4x memory vs. storing unique frames and reconstructing
+  stacks), but is far simpler to get right first. Flagged as a known future
+  optimization, not implemented yet.
+- **`sample(batch_size)`** uses `random.sample` (without replacement) and
+  returns plain **numpy arrays** (not torch tensors) — keeps this module
+  framework-agnostic, same way `wrappers.py` has no torch dependency. The
+  training loop (a later step) converts to tensors when needed.
+- `done` matters for the future loss computation: when `done` is true there's
+  no valid `next_state` to bootstrap value from, so the target should not
+  include the discounted next-state term for that sample.
 
