@@ -1,9 +1,10 @@
-import torch
 import torch.nn as nn
 
 
-class DQN(nn.Module):
-    def __init__(self, num_actions, num_frames=4):
+# conv trunk from the Nature DQN paper, shared by every algorithm's network
+# (Q-network for DQN, actor-critic for PPO, ...) - each adds its own head on top
+class NatureCNN(nn.Module):
+    def __init__(self, num_frames=4):
         super().__init__()
         # the convolution layer involves three hidden layers
         self.conv = nn.Sequential(
@@ -15,12 +16,7 @@ class DQN(nn.Module):
             nn.ReLU(),
         )
         # 84x84 input -> conv stack above -> 64 channels of 7x7 feature maps
-        self.fc = nn.Sequential(
-            nn.Linear(64 * 7 * 7, 512),
-            nn.ReLU(),
-            nn.Linear(512, num_actions),
-        )
-        # the output is converted to 18 actions each with their Q-value
+        self.out_features = 64 * 7 * 7
 
     def forward(self, x):
         # this is the normalization step
@@ -28,6 +24,4 @@ class DQN(nn.Module):
         # calling the conv layer
         x = self.conv(x)
         # flattening (64, 7, 7) -> (3136, )
-        x = x.flatten(start_dim=1)
-        # passing the flattend into fully-connected network
-        return self.fc(x)
+        return x.flatten(start_dim=1)

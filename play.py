@@ -1,36 +1,22 @@
 import argparse
 
-import gymnasium as gym
-import ale_py
-import numpy as np
 import torch
 
-from wrappers import FrameSkip, ResizeObservation, FrameStack, ClipReward
-from model import DQN
-from agent import EpsilonGreedy
-from main import params
-
-
-def make_render_env(params):
-    env = gym.make("ALE/DonkeyKong-v5", obs_type="grayscale", render_mode="human")
-    env = FrameSkip(env, skip=params.frame_skip)
-    env = ClipReward(env)
-    env = ResizeObservation(env, size=(84, 84))
-    env = FrameStack(env, num_frames=params.num_frames)
-    return env
+from envs import make_env
+from factory import make_agent, make_config
 
 
 def play(checkpoint_path, num_episodes=5):
-    gym.register_envs(ale_py)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    env = make_render_env(params)
-    net = DQN(num_actions=env.action_space.n, num_frames=params.num_frames).to(device)
-    net.load_state_dict(torch.load(checkpoint_path, map_location=device))
-    net.eval()
+    # the checkpoint records its algorithm + config, so it alone is enough to
+    # rebuild a matching env and agent
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    cfg = make_config(checkpoint["algo"], **checkpoint["config"])
 
-    # epsilon=0 -> always exploit the trained network, no random exploration
-    agent = EpsilonGreedy(epsilon=0.0, rng=np.random.default_rng(), device=device)
+    env = make_env(cfg, render_mode="human")
+    agent = make_agent(checkpoint["algo"], cfg, env, device)
+    agent.load_checkpoint(checkpoint)
 
     for episode in range(num_episodes):
         state, info = env.reset()
@@ -38,7 +24,8 @@ def play(checkpoint_path, num_episodes=5):
         episode_reward = 0.0
 
         while not done:
-            action = agent.choose_action(env.action_space, state, net)
+            # explore=False -> always exploit the trained network, no random exploration
+            action = agent.act(state, explore=False)
             state, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             episode_reward += reward

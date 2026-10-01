@@ -36,6 +36,16 @@ this tracks the steps to move from table lookups to a neural network.
       (no discrete state grid anymore); use reward-per-episode curves, loss
       curves, and/or rendered gameplay video instead
 
+## Multi-algorithm restructure
+
+- [x] **13. Factory architecture** - `BaseAgent` interface + `factory.py`
+      registry + shared `trainer.py` loop; per-algorithm config dataclasses;
+      shared `NatureCNN` encoder; DQN ported onto it with no behavior change
+- [ ] **14. DQN variants as `DQNConfig` flags** - Double DQN, Dueling head,
+      prioritized experience replay
+- [ ] **15. PPO** - `PPOAgent(BaseAgent)`, actor-critic head on `NatureCNN`,
+      rollout buffer + GAE (likely wants vectorized envs)
+
 ## Notes / Decisions
 
 - (log framework choice, hyperparameter values, and any deviations here as
